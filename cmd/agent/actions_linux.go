@@ -506,6 +506,12 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 			err = writeSysctl(p.Path, []byte(p.Payload))
 		}
 	}
+	if err == nil && p.CompanionPath != "" {
+		companion, verifyErr := snapshotMutation(p.CompanionPath, "file")
+		if verifyErr != nil || !companion.Exists || companion.Mode != 0644 || companion.UID != 0 || companion.GID != 0 || !bytes.Equal(companion.Data, []byte(p.CompanionPayload)) {
+			err = errors.New("managed companion content or metadata did not match the compiled plan")
+		}
+	}
 	after := observed(rule)
 	if err != nil || after.Status != wire.Pass || time.Now().After(deadline) {
 		if restoreErr := restoreRule(&backup, rule); restoreErr != nil {
