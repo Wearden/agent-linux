@@ -1,10 +1,68 @@
 package checks
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
+	"io"
 	"io/fs"
+	"strconv"
 	"strings"
 )
+
+// ParseSSHValidation consumes configuration-only output, never a daemon/key
+// check. Results describe option comparisons, not loaded daemon or banner state.
+func ParseSSHValidation(reader io.Reader) (map[string]bool, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
+	if err != nil || len(data) > 1024*1024 {
+		return nil, errors.New("SSH validation output is unavailable or exceeds1 MiB")
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 4096), 65536)
+	results := make(map[string]bool, len(sshBaselines))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.ContainsRune(line, 0) {
+			return nil, errors.New("SSH validation output contains NUL")
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		option := strings.ToLower(fields[0])
+		baseline, known := SSHBaseline(option)
+		if !known {
+			continue
+		}
+		if _, exists := results[option]; exists || len(fields) != 2 {
+			return nil, errors.New("duplicate or malformed selected SSH validation option")
+		}
+		value := strings.ToLower(fields[1])
+		pass := value == strings.ToLower(baseline)
+		switch option {
+		case "loglevel":
+			pass = value == "info" || value == "verbose"
+		case "maxauthtries", "clientaliveinterval", "clientalivecountmax", "logingracetime", "maxsessions":
+			actual, err := strconv.ParseUint(value, 10, 32)
+			limit, limitErr := strconv.ParseUint(baseline, 10, 32)
+			if err != nil || limitErr != nil {
+				return nil, errors.New("invalid selected SSH validation numeric value")
+			}
+			pass = actual <= limit
+			if option == "clientaliveinterval" || option == "logingracetime" {
+				pass = pass && actual > 0
+			}
+		}
+		results[option] = pass
+	}
+	if scanner.Err() != nil {
+		return nil, errors.New("cannot read bounded SSH validation output")
+	}
+	if len(results) != len(sshBaselines) {
+		return nil, errors.New("SSH validation output lacks required policy options")
+	}
+	return results, nil
+}
 
 // Shared by observations and typed mutation planning. Callers cannot introduce
 // network-provided SSH options or replacement values into this baseline.
