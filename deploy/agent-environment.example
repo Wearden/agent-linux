@@ -1,0 +1,3 @@
+# Example only. Never commit an actual host token.
+WEARDEN_CORE_URL=https://CORE_ORIGIN
+WEARDEN_ENROLLMENT_TOKEN=SET-A-SCOPED-ENROLLMENT-TOKEN

@@ -1,0 +1,26 @@
+[Unit]
+Description=Wearden Linux agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+StateDirectory=wearden-agent
+StateDirectoryMode=0700
+EnvironmentFile=/etc/wearden/agent-environment
+ExecStart=/usr/local/bin/wearden-agent -daemon -core-url ${WEARDEN_CORE_URL} -state-dir /var/lib/wearden-agent
+Restart=on-failure
+RestartSec=5
+# Independent private recovery helpers must outlive a failed main process.
+KillMode=process
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+# Preserve the host filesystem view used by permission and mount checks.
+PrivateTmp=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

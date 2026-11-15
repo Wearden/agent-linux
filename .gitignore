@@ -1,0 +1,8 @@
+bin/
+*.exe
+*.test
+coverage.out
+.env
+.env.*
+
+docs/dependency-review/

@@ -1,0 +1,9 @@
+# Reviewed firewall dependencies
+
+The user approved github.com/google/nftables v0.3.0 for read-only firewall inspection. The reviewed connection/table/chain/rule/expression and xtables payload sources are retained locally in the ignored docs/dependency-review directory. The scanner calls only ListTables, ListChains, GetRules, CloseLasting and socket deadline setup. Its direct netlink messages use only NFT_MSG_GETGEN and NFT_MSG_GETRULE with Request/Dump flags. No Flush/Add/Del or rule-application API is called.
+
+mdlayher/netlink and mdlayher/socket provide local kernel netlink sockets and deadlines. The reviewed socket implementation also exposes namespace-switching APIs and reads a process namespace descriptor when explicitly switching namespaces; this scanner uses the default current namespace and does not request a switch. The packages expose writes and other socket operations, but the scanner's payloads are limited to read queries. No remote server, credential-file discovery or downloaded binary is part of this provider. Go module download/compilation writes the already approved module/build caches outside the repository.
+
+Indirect Go x/net, x/sys and x/sync libraries supply socket polling, BPF types, syscalls and synchronization. BPF attachment, namespace changes and firewall mutations are not requested by this provider. go-cmp is an upstream build-tagged fuzzing dependency, not part of the normal scanner path. No fuzzing or tests were run. Third-party license text is included in THIRD_PARTY_NOTICES.md.
+
+No live netlink query, firewall scan, service operation or host mutation was performed while implementing this source. Standalone Linux/Windows compiler checks are separate from runtime validation.
