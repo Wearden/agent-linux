@@ -303,6 +303,18 @@ func sshCheck(system fs.FS, target string) (string, string) {
 			ok = ok && n > 0
 		}
 	}
+	if target == "banner" && ok {
+		banner, err := nativeRead(system, "etc/issue.net")
+		if isMissing(err) {
+			return wire.Fail, "configured SSH banner file is absent"
+		}
+		if err != nil {
+			return wire.Error, "configured SSH banner is inaccessible, symlinked or outside reviewed file bounds"
+		}
+		if strings.TrimSpace(banner) == "" {
+			return wire.Fail, "configured SSH banner file is empty"
+		}
+	}
 	return result(ok, "explicit SSH file policy inspected with first-value precedence; running daemon state and launch overrides are not attested")
 }
 
