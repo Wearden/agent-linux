@@ -25,6 +25,7 @@ type mutationPlan struct {
 	CompanionPath, CompanionPayload string
 	Mode                            fs.FileMode
 	Owner                           bool
+	ShadowGroup                     bool
 }
 
 func actionStateTrusted(base string) error {
@@ -45,6 +46,12 @@ func actionStateTrusted(base string) error {
 func planMutation(rule checks.Rule) (mutationPlan, error) {
 	var p mutationPlan
 	switch rule.Kind {
+	case "policy_config":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule {
+			return p, errors.New("policy rule differs from embedded catalog")
+		}
+		return policyPlan(rule)
 	case "sshd_config":
 		approved, known := config.NativeRule(rule.ID)
 		if !known || approved != rule {
@@ -87,6 +94,8 @@ func planMutation(rule checks.Rule) (mutationPlan, error) {
 		switch rule.ID {
 		case "LNX-USR-001", "LNX-USR-003":
 			p.Mode = 0644
+		case "LNX-USR-002", "LNX-USR-004":
+			p.Mode, p.ShadowGroup = 0640, true
 		case "LNX-USR-010":
 			p.Mode, p.Owner = 0700, false
 		case "LNX-USR-011", "LNX-SSH-001":
@@ -95,7 +104,7 @@ func planMutation(rule checks.Rule) (mutationPlan, error) {
 		case "LNX-LOG-003":
 			p.Owner = false
 		default:
-			return p, errors.New("credential-file metadata changes are read-only in this engine")
+			return p, errors.New("file metadata control is outside the reviewed write allowlist")
 		}
 	default:
 		return p, errors.New("control has no reviewed safe native mutation; no shell, authentication, package or firewall action will execute")
@@ -189,6 +198,11 @@ func snapshotBeforeMutation(name, kind string) (ruleBackup, error) {
 
 func snapshotMutation(name, kind string) (ruleBackup, error) {
 	backup := ruleBackup{Path: name, Kind: kind}
+	if kind == "policy" {
+		backup, err := snapshotMutation(name, "file")
+		backup.Kind = "policy"
+		return backup, err
+	}
 	info, err := secureMutationPath(name, kind == "file")
 	if err != nil {
 		return backup, err
@@ -318,6 +332,9 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 	if backup.Kind != p.Kind || backup.Path != p.Path {
 		return errors.New("backup path does not match locally approved rule")
 	}
+	if p.Kind == "policy" {
+		return restorePolicy(backup, p, rule)
+	}
 	companionPath := p.CompanionPath
 	if p.Kind == "sysctl" {
 		companionPath = p.Persistent
@@ -442,7 +459,7 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		change.Message = "module is active or its policy is ambiguous; no live unload or override attempted"
 		return change, nil
 	}
-	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") {
+	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") && !(rule.Kind == "policy_config" && before.Evidence == "password policy value is implicit or absent") {
 		change.Message = "native precheck cannot safely establish current state"
 		return change, nil
 	}
@@ -491,8 +508,15 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		uid, gid = 0, 0
 	}
 	switch p.Kind {
+	case "policy":
+		err = applyPolicy(&backup, p, rule)
 	case "metadata":
-		err = writeMetadata(p.Path, p.Mode, uid, gid)
+		if p.ShadowGroup {
+			gid, err = checks.ShadowGroupID(os.DirFS("/"))
+		}
+		if err == nil {
+			err = writeMetadata(p.Path, p.Mode, uid, gid)
+		}
 	case "file":
 		if p.CompanionPath != "" {
 			err = writeManaged(p.CompanionPath, []byte(p.CompanionPayload), 0644, 0, 0)

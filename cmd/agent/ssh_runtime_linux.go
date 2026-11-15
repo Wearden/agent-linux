@@ -7,11 +7,107 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Wearden/agent-linux/internal/checks"
+	"golang.org/x/sys/unix"
 )
+
+type sshProcessCandidate struct {
+	pidfd *os.File
+	pid   int
+	start uint64
+}
+
+// This pins a process instance only. Listener and original-argument validation
+// are still required before any reload; this helper sends no signal.
+func pinSSHProcessCandidate(pid int, executable *os.File) (candidate *sshProcessCandidate, err error) {
+	if pid <= 1 || executable == nil {
+		return nil, errors.New("invalid SSH process candidate")
+	}
+	trusted, err := executable.Stat()
+	if err != nil {
+		return nil, errors.New("trusted SSH executable descriptor is unavailable")
+	}
+	fd, err := unix.PidfdOpen(pid, 0)
+	if err != nil {
+		return nil, errors.New("cannot pin SSH candidate with pidfd")
+	}
+	process := os.NewFile(uintptr(fd), "ssh-process")
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, process.Close())
+		}
+	}()
+	readStart := func() (uint64, error) {
+		file, openErr := os.OpenFile("/proc/"+strconv.Itoa(pid)+"/stat", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if openErr != nil {
+			return 0, errors.New("SSH candidate stat is unavailable")
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
+		if readErr = errors.Join(readErr, file.Close()); readErr != nil {
+			return 0, errors.New("cannot read bounded SSH candidate stat")
+		}
+		return sshProcessStart(data, pid)
+	}
+	start, err := readStart()
+	if err != nil {
+		return nil, err
+	}
+	procPath := "/proc/" + strconv.Itoa(pid)
+	metadata, err := os.Stat(procPath)
+	if err != nil {
+		return nil, errors.New("SSH candidate ownership is unavailable")
+	}
+	owner, ok := metadata.Sys().(*syscall.Stat_t)
+	if !ok || owner.Uid != 0 {
+		return nil, errors.New("SSH candidate must be root owned")
+	}
+	// exe is a kernel procfs magic link; inspect its inode, never its contents.
+	actual, err := os.Stat(procPath + "/exe")
+	if err != nil || !os.SameFile(trusted, actual) {
+		return nil, errors.New("SSH candidate executable does not match the pinned binary")
+	}
+	again, err := readStart()
+	if err != nil || again != start {
+		return nil, errors.New("SSH candidate changed during identity inspection")
+	}
+	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	n, err := unix.Poll(poll, 0)
+	if err != nil || n != 0 || poll[0].Revents != 0 {
+		return nil, errors.New("pinned SSH candidate exited or became unavailable")
+	}
+	return &sshProcessCandidate{pidfd: process, pid: pid, start: start}, nil
+}
+
+// starttime is field22; comm may itself contain spaces and parentheses.
+// This identifies an observed process instance, not an authenticated listener.
+func sshProcessStart(data []byte, expectedPID int) (uint64, error) {
+	if expectedPID <= 1 || len(data) > 4096 || bytes.IndexByte(data, 0) >= 0 {
+		return 0, errors.New("invalid SSH process identity evidence")
+	}
+	text := strings.TrimSpace(string(data))
+	open, close := strings.Index(text, " ("), strings.LastIndex(text, ")")
+	if open < 1 || close <= open+2 || close+1 >= len(text) || text[close+1] != ' ' {
+		return 0, errors.New("malformed SSH process stat record")
+	}
+	pid, err := strconv.ParseUint(text[:open], 10, 31)
+	if err != nil || pid != uint64(expectedPID) {
+		return 0, errors.New("SSH process stat PID does not match the intended process")
+	}
+	fields := strings.Fields(text[close+1:])
+	if len(fields) < 20 || (fields[0] != "R" && fields[0] != "S" && fields[0] != "D") {
+		return 0, errors.New("SSH process is terminated, stopped or outside reviewed runtime states")
+	}
+	start, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil || start == 0 {
+		return 0, errors.New("SSH process start time is unavailable")
+	}
+	return start, nil
+}
 
 // The caller owns the descriptor. Future validation must execute this pinned
 // file with fixed arguments and a clean environment, rather than resolve PATH.
