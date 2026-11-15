@@ -16,11 +16,13 @@ import (
 	"time"
 
 	"github.com/Wearden/agent-linux/internal/checks"
+	"github.com/Wearden/agent-linux/internal/config"
 	"github.com/Wearden/proto/wire"
 )
 
 type mutationPlan struct {
 	Kind, Path, Payload, Persistent string
+	CompanionPath, CompanionPayload string
 	Mode                            fs.FileMode
 	Owner                           bool
 }
@@ -43,6 +45,20 @@ func actionStateTrusted(base string) error {
 func planMutation(rule checks.Rule) (mutationPlan, error) {
 	var p mutationPlan
 	switch rule.Kind {
+	case "sshd_config":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule {
+			return p, errors.New("SSH mutation rule differs from the embedded catalog")
+		}
+		value, known := checks.SSHBaseline(rule.Target)
+		if !known {
+			return p, errors.New("SSH option has no compiled mutation baseline")
+		}
+		p = mutationPlan{Kind: "file", Path: "etc/ssh/sshd_config.d/00-wearden-" + rule.ID + ".conf", Payload: rule.Target + " " + value + "\n", Mode: 0600, Owner: true}
+		if rule.ID == "LNX-SSH-015" {
+			p.CompanionPath = "etc/issue.net"
+			p.CompanionPayload = "Authorised use only. All activity is monitored and logged.\n"
+		}
 	case "kernel_module":
 		p = mutationPlan{Kind: "file", Path: "etc/modprobe.d/99-wearden-" + rule.ID + ".conf", Payload: "blacklist " + rule.Target + "\ninstall " + rule.Target + " /bin/false\n", Mode: 0644, Owner: true}
 	case "sysctl":
@@ -302,9 +318,16 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 	if backup.Kind != p.Kind || backup.Path != p.Path {
 		return errors.New("backup path does not match locally approved rule")
 	}
+	companionPath := p.CompanionPath
+	if p.Kind == "sysctl" {
+		companionPath = p.Persistent
+	}
+	if companionPath != "" && backup.Companion == nil {
+		return errors.New("required companion backup is absent")
+	}
 	if backup.Companion != nil {
-		if p.Kind != "sysctl" || backup.Companion.Path != p.Persistent || backup.Companion.Kind != "file" {
-			return errors.New("invalid persistent sysctl backup")
+		if companionPath == "" || backup.Companion.Path != companionPath || backup.Companion.Kind != "file" || backup.Companion.Companion != nil {
+			return errors.New("invalid companion configuration backup")
 		}
 		if err := restoreSnapshot(backup.Companion); err != nil {
 			return err
@@ -380,6 +403,10 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		change.Message = err.Error()
 		return change, nil
 	}
+	if rule.Kind == "sshd_config" {
+		change.Message = "SSH native plan is prepared but execution requires banner and daemon validation/reload integration; no mutation attempted"
+		return change, nil
+	}
 	if os.Geteuid() != 0 {
 		change.Message = "native remediation requires a root-owned service"
 		return change, nil
@@ -425,8 +452,12 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		return change, nil
 	}
 	backup.TaskID, backup.RunID, backup.RuleID, backup.Prepared = task.ID, task.RunID, rule.ID, true
-	if p.Persistent != "" {
-		companion, err := snapshotBeforeMutation(p.Persistent, "file")
+	companionPath := p.CompanionPath
+	if p.Kind == "sysctl" {
+		companionPath = p.Persistent
+	}
+	if companionPath != "" {
+		companion, err := snapshotBeforeMutation(companionPath, "file")
 		if err != nil {
 			change.Message = err.Error()
 			return change, nil
@@ -463,7 +494,12 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 	case "metadata":
 		err = writeMetadata(p.Path, p.Mode, uid, gid)
 	case "file":
-		err = writeManaged(p.Path, []byte(p.Payload), p.Mode, uid, gid)
+		if p.CompanionPath != "" {
+			err = writeManaged(p.CompanionPath, []byte(p.CompanionPayload), 0644, 0, 0)
+		}
+		if err == nil {
+			err = writeManaged(p.Path, []byte(p.Payload), p.Mode, uid, gid)
+		}
 	case "sysctl":
 		err = writeManaged(p.Persistent, []byte(rule.Target+" = "+strings.TrimSpace(p.Payload)+"\n"), 0644, 0, 0)
 		if err == nil {
