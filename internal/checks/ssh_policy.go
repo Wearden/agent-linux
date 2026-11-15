@@ -80,6 +80,35 @@ func SSHBaseline(option string) (string, bool) {
 	return value, ok
 }
 
+// The caller must obtain this banner from the trusted installed executable.
+// Version selection alone is not proof that a vendor supports the operation.
+func SSHValidationArgs(version string) ([]string, error) {
+	if len(version) > 256 {
+		return nil, errors.New("SSH version banner exceeds reviewed bounds")
+	}
+	fields := strings.Fields(version)
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "OpenSSH_") {
+		return nil, errors.New("unrecognized SSH daemon version banner")
+	}
+	token := strings.TrimSuffix(strings.TrimPrefix(fields[0], "OpenSSH_"), ",")
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return nil, errors.New("unrecognized SSH daemon version syntax")
+	}
+	minorText, patch, portable := strings.Cut(parts[1], "p")
+	major, majorErr := strconv.ParseUint(parts[0], 10, 16)
+	minor, minorErr := strconv.ParseUint(minorText, 10, 16)
+	if portable {
+		if _, err := strconv.ParseUint(patch, 10, 16); err != nil {
+			return nil, errors.New("invalid SSH portable version suffix")
+		}
+	}
+	if majorErr != nil || minorErr != nil || major < 9 || (major == 9 && minor < 3) {
+		return nil, errors.New("SSH daemon lacks the reviewed key-free validation mode; no key-reading fallback is allowed")
+	}
+	return []string{"-G", "-f", "/etc/ssh/sshd_config"}, nil
+}
+
 // SSHDropInDirective prepares only a compiled directive after checking the
 // existing include grammar. The caller must still back up, write, recheck and
 // recover it; an earlier included file can win first-value precedence.
