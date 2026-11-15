@@ -1,2 +1,3 @@
 # Embedded canonical manifest bytes must not change with checkout settings.
 internal/config/catalog.json -text
+internal/config/catalog-2204.json -text

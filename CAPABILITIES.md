@@ -20,7 +20,7 @@ The server sends IDs and task metadata, never executable commands, writable path
 | LNX-USR-010 | Root home mode 0700 | Metadata only; owner retained. Directory contents are not read. |
 | LNX-USR-011..012 | crontab 0600 and sudoers 0440, root:root | Metadata only; no cron/sudo policy contents read or changed. |
 
-These 27 controls have mutation handlers. All other controls return an explicit failed change with a reason. Shadow/gshadow mutation, package installation, shell execution, firewall rules, mount changes, account modifications and arbitrary file edits are unavailable. A handler can still refuse a particular host when evidence or safe filesystem conditions are unavailable.
+These27 shared controls have mutation handlers on the matching Ubuntu22.04 and24.04 assignments. The12 additional Ubuntu22.04 audit controls are read-only. All other controls return an explicit failed change with a reason. Shadow/gshadow mutation, package installation, shell execution, firewall rules, mount changes, account modifications and arbitrary file edits are unavailable. A handler can still refuse a particular host when evidence or safe filesystem conditions are unavailable.
 
 Targets and their ancestors must not follow symlinks. Mutation parents and root task-state ancestors must be root-controlled without group/world write access. Hard-linked regular files and targets with extended attributes or ACLs are refused because this backup format does not preserve those attributes. Do not independently change managed targets while tasks or rollbacks are pending; explicit rollback restores the saved original state.
 

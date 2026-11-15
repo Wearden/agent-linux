@@ -228,7 +228,7 @@ func prepareTaskState(dir string) (string, error) {
 	return base, actionStateTrusted(base)
 }
 
-func processTask(ctx context.Context, dir, agentID string, client *report.Client, allowRemediation bool) error {
+func processTask(ctx context.Context, dir, agentID string, client *report.Client, allowRemediation bool, benchmark string) error {
 	base, err := prepareTaskState(dir)
 	if err != nil {
 		return err
@@ -236,7 +236,7 @@ func processTask(ctx context.Context, dir, agentID string, client *report.Client
 	if err := recoverAndFlushTasks(ctx, base, agentID, client); err != nil {
 		return err
 	}
-	if err := checks.RequireUbuntu2404(os.DirFS("/")); err != nil {
+	if err := checks.RequireUbuntuBenchmark(os.DirFS("/"), benchmark); err != nil {
 		return err
 	}
 	if err := taskCapacity(base); err != nil {
@@ -254,7 +254,7 @@ func processTask(ctx context.Context, dir, agentID string, client *report.Client
 		return nil
 	}
 	task := *envelope.Task
-	if !safeIdentity.MatchString(task.ID) || !safeIdentity.MatchString(task.RunID) || len(task.RuleIDs) < 1 || len(task.RuleIDs) > 88 {
+	if !safeIdentity.MatchString(task.ID) || !safeIdentity.MatchString(task.RunID) || len(task.RuleIDs) < 1 || len(task.RuleIDs) > 100 {
 		return errors.New("invalid task identity or rule count")
 	}
 	seen := map[string]bool{}

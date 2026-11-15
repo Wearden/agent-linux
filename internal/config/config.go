@@ -13,15 +13,22 @@ import (
 //go:embed catalog.json
 var nativeCatalog []byte
 
+//go:embed catalog-2204.json
+var nativeCatalog2204 []byte
+
 // NativeRule resolves metadata locally; task payloads may select IDs, never paths.
 func NativeRule(id string) (checks.Rule, bool) {
-	var catalog Ruleset
-	if json.Unmarshal(nativeCatalog, &catalog) != nil {
-		return checks.Rule{}, false
-	}
-	for _, rule := range catalog.Rules {
-		if rule.ID == id {
-			return rule, true
+	// The shared88 control definitions are identical across both releases.
+	// Ubuntu22 adds read-only audit IDs; mutation paths remain fixed by ID.
+	for _, raw := range [][]byte{nativeCatalog, nativeCatalog2204} {
+		var catalog Ruleset
+		if json.Unmarshal(raw, &catalog) != nil {
+			return checks.Rule{}, false
+		}
+		for _, rule := range catalog.Rules {
+			if rule.ID == id {
+				return rule, true
+			}
 		}
 	}
 	return checks.Rule{}, false
@@ -66,9 +73,13 @@ func Load(reader io.Reader) (Ruleset, error) {
 		return r, errors.New("trailing JSON content")
 	}
 	allowed := approved
-	if r.Version == "1" && r.BenchmarkID == "ubuntu-24.04-native" {
+	if r.Version == "1" && (r.BenchmarkID == "ubuntu-24.04-native" || r.BenchmarkID == "ubuntu-22.04-native") {
 		var catalog Ruleset
-		if err := json.Unmarshal(nativeCatalog, &catalog); err != nil {
+		raw := nativeCatalog
+		if r.BenchmarkID == "ubuntu-22.04-native" {
+			raw = nativeCatalog2204
+		}
+		if err := json.Unmarshal(raw, &catalog); err != nil {
 			return r, errors.New("invalid embedded native catalog")
 		}
 		if r.RulesetVersion != catalog.RulesetVersion {

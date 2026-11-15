@@ -103,7 +103,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := checks.RequireUbuntu2404(os.DirFS("/")); err != nil {
+	if err := checks.RequireUbuntuBenchmark(os.DirFS("/"), rules.BenchmarkID); err != nil {
 		return err
 	}
 	result, err := scan(rules, os.DirFS("/"), *agentID)
