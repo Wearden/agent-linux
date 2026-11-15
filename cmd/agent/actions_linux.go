@@ -121,13 +121,20 @@ func secureMutationPath(name string, allowMissing bool) (fs.FileInfo, error) {
 	return nil, errors.New("invalid local mutation path")
 }
 
+func reviewedMutationDirectory(parent string) bool {
+	switch parent {
+	case "etc/systemd/journald.conf.d", "etc/modprobe.d", "etc/sysctl.d", "etc/ssh/sshd_config.d":
+		return true
+	}
+	return false
+}
+
 func ensureMutationParent(name string) error {
 	parent := path.Dir(name)
 	if _, err := secureMutationPath(parent, false); err == nil {
 		return nil
 	}
-	// Only these two known drop-in directories may be created by the engine.
-	if parent != "etc/systemd/journald.conf.d" && parent != "etc/modprobe.d" && parent != "etc/sysctl.d" {
+	if !reviewedMutationDirectory(parent) {
 		return errors.New("required mutation directory does not exist")
 	}
 	if _, err := secureMutationPath(path.Dir(parent), false); err != nil {
@@ -155,7 +162,7 @@ func snapshotBeforeMutation(name, kind string) (ruleBackup, error) {
 			return ruleBackup{}, err
 		}
 		if info == nil {
-			if parent != "etc/systemd/journald.conf.d" && parent != "etc/modprobe.d" && parent != "etc/sysctl.d" {
+			if !reviewedMutationDirectory(parent) {
 				return ruleBackup{}, errors.New("configuration parent is outside reviewed directory creation policy")
 			}
 			return ruleBackup{Kind: kind, Path: name, ParentCreated: true}, nil
@@ -307,6 +314,9 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 }
 
 func restoreSnapshot(backup *ruleBackup) error {
+	if backup.ParentCreated && (backup.Exists || backup.Kind != "file" || !reviewedMutationDirectory(path.Dir(backup.Path))) {
+		return errors.New("created-parent backup is outside the reviewed directory policy")
+	}
 	if !backup.Exists {
 		if backup.ParentCreated {
 			parent, err := secureMutationPath(path.Dir(backup.Path), true)
