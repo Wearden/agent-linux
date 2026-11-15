@@ -278,21 +278,20 @@ func sshCheck(system fs.FS, target string) (string, string) {
 		return wire.Error, "SSH option is implicit; compiled defaults and daemon launch overrides require review"
 	}
 	value = strings.ToLower(value)
+	baseline, known := SSHBaseline(target)
+	if !known {
+		return wire.Error, "unknown SSH option"
+	}
 	ok := false
 	switch target {
 	case "loglevel":
 		ok = value == "info" || value == "verbose"
-	case "ignorerhosts", "usepam":
-		ok = value == "yes"
-	case "x11forwarding", "hostbasedauthentication", "permitrootlogin", "permitemptypasswords", "permituserenvironment":
-		ok = value == "no"
-	case "banner":
-		ok = value == "/etc/issue.net"
+	case "ignorerhosts", "usepam", "x11forwarding", "hostbasedauthentication", "permitrootlogin", "permitemptypasswords", "permituserenvironment", "banner":
+		ok = value == strings.ToLower(baseline)
 	default:
-		limits := map[string]int{"maxauthtries": 4, "clientaliveinterval": 300, "clientalivecountmax": 3, "logingracetime": 60, "maxsessions": 10}
-		limit, exists := limits[target]
-		if !exists {
-			return wire.Error, "unknown SSH option"
+		limit, err := strconv.Atoi(baseline)
+		if err != nil {
+			return wire.Error, "compiled SSH numeric baseline is invalid"
 		}
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
