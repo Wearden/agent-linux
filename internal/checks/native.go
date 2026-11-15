@@ -154,25 +154,10 @@ func metadataCheck(system fs.FS, rule Rule) (string, string) {
 		want = 0440
 	case "/etc/shadow", "/etc/gshadow":
 		want = 0640
-		groups, err := nativeRead(system, "etc/group")
+		var err error
+		groupID, err = ShadowGroupID(system)
 		if err != nil {
-			return wire.Error, "cannot resolve local shadow group ID"
-		}
-		count := 0
-		for _, line := range strings.Split(groups, "\n") {
-			fields := strings.Split(line, ":")
-			if len(fields) != 4 || fields[0] != "shadow" {
-				continue
-			}
-			id, err := strconv.ParseUint(fields[2], 10, 32)
-			if err != nil {
-				return wire.Error, "invalid shadow group ID"
-			}
-			groupID = uint32(id)
-			count++
-		}
-		if count != 1 {
-			return wire.Error, "shadow group ID is absent or ambiguous"
+			return wire.Error, "cannot resolve unique local shadow group ID"
 		}
 	}
 	uid, gid, ok := ownership(info)
@@ -180,6 +165,32 @@ func metadataCheck(system fs.FS, rule Rule) (string, string) {
 		return wire.Error, "filesystem does not expose native owner metadata"
 	}
 	return result(mode == want && special == 0 && uid == 0 && gid == groupID, "permission and numeric ownership metadata inspected; file content was not read")
+}
+
+// ShadowGroupID reads only public group metadata, never password databases.
+func ShadowGroupID(system fs.FS) (uint32, error) {
+	text, err := nativeRead(system, "etc/group")
+	if err != nil {
+		return 0, errors.New("local group metadata is unavailable")
+	}
+	var groupID uint32
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) != 4 || fields[0] != "shadow" {
+			continue
+		}
+		id, err := strconv.ParseUint(fields[2], 10, 32)
+		if err != nil {
+			return 0, errors.New("invalid shadow group ID")
+		}
+		groupID = uint32(id)
+		count++
+	}
+	if count != 1 {
+		return 0, errors.New("shadow group ID is absent or ambiguous")
+	}
+	return groupID, nil
 }
 
 func uidZero(system fs.FS) (string, string) {
