@@ -18,7 +18,7 @@ The compiled binary is for a Linux lab. The CLI refuses to scan a Windows host. 
 ./wearden-agent-linux-amd64 -rules ./filesystem.json -agent-id YOUR_ENROLLED_AGENT_ID > report.json
 ```
 
-Use `ruleset/native/linux/ubuntu-24.04/catalog.json` for the full native catalog. Its benchmark ID is `ubuntu-24.04-native` and ruleset version is `native-linux-3`. The original `filesystem.json` (`ubuntu-24.04-native-filesystem`, version `1`) remains accepted for existing CLI deployments. Both manifests are restricted to exact locally approved IDs, targets, kinds and severities; reviewed subsets are allowed. Unknown fields, changed definitions, duplicate IDs and trailing JSON are rejected. Legacy YAML commands are never executed or parsed by the agent.
+Use `ruleset/native/linux/ubuntu-24.04/catalog.json` (`ubuntu-24.04-native`, version `native-linux-3`) or `ruleset/native/linux/ubuntu-22.04/catalog.json` (`ubuntu-22.04-native`, version `native-linux-2204-1`) for the matching release. The original `filesystem.json` (`ubuntu-24.04-native-filesystem`, version `1`) remains accepted for existing CLI deployments. Both manifests are restricted to exact locally approved IDs, targets, kinds and severities; reviewed subsets are allowed. Unknown fields, changed definitions, duplicate IDs and trailing JSON are rejected. Legacy YAML commands are never executed or parsed by the agent.
 
 For optional one-shot submission, set `WEARDEN_AGENT_TOKEN` in the process environment and pass `-core-url https://YOUR_CORE_ORIGIN -rules-sha256 EXPECTED_DIGEST_FROM_CORE`. Do not put a real token on the command line or in committed files. Digest mismatch stops scanning. The report is written to stdout before upload; upload failure returns a nonzero exit code. Save stdout to a protected file if needed. One-shot mode does not use the daemon spool.
 
@@ -40,7 +40,7 @@ An interrupted atomic write may leave a private `.write-*` file. Spool startup s
 
 ## Coverage and semantics
 
-The full catalog preserves all 88 legacy Ubuntu control IDs and severities. Native evaluators connect 87 entries; one entry deliberately returns `error` with a specific manual reason. This is a separately versioned native baseline, not verified CIS compliance or exact replication of old shell commands. File-policy findings describe the reviewed files and do not attest loaded daemon configuration, effective PAM activation or arbitrary service launch overrides.
+Ubuntu24.04 preserves all88 legacy control IDs and severities, with87 connected evaluator entries. Ubuntu22.04 preserves all100 IDs and severities, with99 connected entries. Both retain the explicit manual USR006 entry. Ubuntu22.04 adds auditd package/enablement inspection and read-only loaded audit-rule selectors; see the matching ruleset README for limits. This is a separately versioned native baseline, not verified CIS compliance or exact replication of old shell commands. File-policy findings describe the reviewed files and do not attest loaded daemon configuration, effective PAM activation or arbitrary service launch overrides.
 
 | Native kind | Entries | Scope |
 | --- | ---: | --- |
@@ -82,6 +82,6 @@ Linux apply tasks now arm a separate root-controlled recovery process. Details, 
 
 ## Distribution applicability
 
-Live enrollment, one-shot scanning, scheduled scans and fetching new task work require explicit ID=ubuntu and VERSION_ID=24.04 from os-release metadata. The ordinary /etc/os-release file or its exact standard link to /usr/lib/os-release is accepted; missing/duplicate/dynamic identity fields, arbitrary links and unsafe parent paths are refused. The original ten-control filesystem catalog follows the same distribution requirement. This checks metadata in the current filesystem namespace, not a whole-host or kernel attestation.
+Initial enrollment requires explicit ID=ubuntu and VERSION_ID=22.04 or24.04 from os-release metadata. One-shot scanning, scheduled scans and fetching new task work additionally require the assignment to match that release. The ordinary /etc/os-release file or its exact standard link to /usr/lib/os-release is accepted; missing/duplicate/dynamic identity fields, arbitrary links and unsafe parent paths are refused. The original ten-control filesystem catalog follows the same distribution requirement. This checks metadata in the current filesystem namespace, not a whole-host or kernel attestation.
 
-Already enrolled agents perform local recovery and deliver retained reports/results before refusing new incompatible work. Local manual task recovery remains available even after a distribution change. No OS metadata or live host was read while implementing this guard; only source compilation was performed. The legacy Ubuntu22.04 SSH fixture is therefore not a supported native scan target.
+Already enrolled agents perform local recovery and deliver retained reports/results before refusing new incompatible work. Local manual task recovery remains available even after a distribution change. No OS metadata or live host was read while implementing this guard; only source compilation was performed. The retained Ubuntu22.04 SSH fixture can match the new22.04 assignment only after separately provisioning the native agent; its SSH service alone does not implement the agent protocol.

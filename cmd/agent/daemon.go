@@ -159,7 +159,7 @@ func loadIdentity(ctx context.Context, dir, coreURL, agentID string) (agentState
 	if !errors.Is(err, os.ErrNotExist) {
 		return state, err
 	}
-	if err := checks.RequireUbuntu2404(os.DirFS("/")); err != nil {
+	if err := checks.RequireSupportedUbuntu(os.DirFS("/")); err != nil {
 		return state, err
 	}
 	state = agentState{Version: wire.Version, CoreURL: coreURL}
@@ -416,15 +416,22 @@ func runDaemon(ctx context.Context, dir, coreURL, agentID string, allowRemediati
 		}
 		err = flushSpool(ctx, spool, state.AgentID, client)
 		if err == nil {
-			err = processTask(ctx, dir, state.AgentID, client, allowRemediation)
+			var base string
+			base, err = prepareTaskState(dir)
+			if err == nil {
+				err = recoverAndFlushTasks(ctx, base, state.AgentID, client)
+			}
 		}
 		var assignment wire.Config
 		if err == nil {
 			assignment, err = assignedConfig(ctx, client)
 		}
+		if err == nil {
+			err = processTask(ctx, dir, state.AgentID, client, allowRemediation, assignment.BenchmarkID)
+		}
 		if err == nil && (assignment.ScanID != "" || !time.Now().Before(state.NextScan)) {
 			var rules config.Ruleset
-			err = checks.RequireUbuntu2404(os.DirFS("/"))
+			err = checks.RequireUbuntuBenchmark(os.DirFS("/"), assignment.BenchmarkID)
 			if err == nil {
 				rules, err = assignedRules(ctx, client, assignment)
 			}

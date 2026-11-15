@@ -22,6 +22,7 @@ type Rule struct {
 func Run(system fs.FS, rules []Rule) []wire.Finding {
 	findings := make([]wire.Finding, 0, len(rules))
 	var firewall map[string]wire.Finding
+	var audit map[string]wire.Finding
 	for _, r := range rules {
 		status, evidence := wire.Error, "unsupported native check"
 		switch r.Kind {
@@ -47,6 +48,15 @@ func Run(system fs.FS, rules []Rule) []wire.Finding {
 			status, evidence = uidZero(system)
 		case "service_disabled":
 			status, evidence = serviceDisabled(system, r.Target)
+		case "auditd_enabled":
+			status, evidence = auditdEnabled(system)
+		case "audit_rules":
+			if audit == nil {
+				audit = observeAuditRules()
+			}
+			if observation, ok := audit[r.Target]; ok {
+				status, evidence = observation.Status, observation.Evidence
+			}
 		case "apt_authentication":
 			status, evidence = aptAuthentication(system)
 		case "sudo_logfile":
