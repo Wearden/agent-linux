@@ -406,13 +406,18 @@ func runDaemon(ctx context.Context, dir, coreURL, agentID string, allowRemediati
 	}
 	backoff = time.Second
 	nextHeartbeat := time.Time{}
+	shipper = newLogShipper(dir)
+	agentLog("info", "agent daemon started; remediation %s", map[bool]string{true: "enabled", false: "disabled"}[allowRemediation])
 	for ctx.Err() == nil {
 		if !time.Now().Before(nextHeartbeat) {
 			_, heartbeatErr := client.Request(ctx, http.MethodPost, "heartbeat", wire.Heartbeat{Version: wire.Version, AgentID: state.AgentID, SentAt: time.Now().UTC()}, http.StatusNoContent, 0)
 			if heartbeatErr != nil && ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "agent heartbeat:", heartbeatErr)
+				agentLog("warn", "heartbeat failed: %v", heartbeatErr)
 			}
 			nextHeartbeat = time.Now().Add(time.Minute)
+		}
+		if logErr := shipper.flush(ctx, client, state.AgentID); logErr != nil && ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "agent log delivery:", logErr)
 		}
 		err = flushSpool(ctx, spool, state.AgentID, client)
 		if err == nil {
@@ -441,6 +446,9 @@ func runDaemon(ctx context.Context, dir, coreURL, agentID string, allowRemediati
 				if err == nil {
 					result.ScanID = assignment.ScanID
 					err = enqueue(spool, result)
+					if err == nil {
+						agentLog("info", "scan finished: %d findings queued for delivery", len(result.Findings))
+					}
 				}
 				if err == nil {
 					state.NextScan = time.Now().UTC().Add(time.Duration(assignment.IntervalSeconds) * time.Second)
@@ -455,7 +463,7 @@ func runDaemon(ctx context.Context, dir, coreURL, agentID string, allowRemediati
 			return nil
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "agent delivery/schedule:", err)
+			agentLog("warn", "delivery or schedule failed: %v", err)
 			if !waitContext(ctx, backoff) {
 				return nil
 			}

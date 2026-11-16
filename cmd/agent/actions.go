@@ -336,6 +336,14 @@ func processTask(ctx context.Context, dir, agentID string, client *report.Client
 		result.Changes = append(result.Changes, change)
 	}
 	journal.Result = &result
+	for _, c := range result.Changes {
+		level := "info"
+		if c.Status == "failed" {
+			level = "warn"
+		}
+		agentLog(level, "task %s %s %s: %s", task.ID, task.Action, c.RuleID, c.Status)
+	}
+	agentLog("info", "task %s %s finished with status %s (%d changes)", task.ID, task.Action, result.Status, len(result.Changes))
 	if err := atomicJSON(journalPath, journal); err != nil {
 		return err
 	}

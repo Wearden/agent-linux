@@ -25,7 +25,7 @@ var taskResultEndpoint = regexp.MustCompile(`^tasks/[A-Za-z0-9][A-Za-z0-9._-]{0,
 
 // Request shares the report transport guards with agent lifecycle requests.
 func (c *Client) Request(ctx context.Context, method, path string, body any, status, limit int) ([]byte, error) {
-	if path != "enroll" && path != "heartbeat" && path != "config" && path != "ruleset" && path != "tasks" && !taskResultEndpoint.MatchString(path) {
+	if path != "enroll" && path != "heartbeat" && path != "config" && path != "ruleset" && path != "tasks" && path != "logs" && !taskResultEndpoint.MatchString(path) {
 		return nil, errors.New("unsupported agent endpoint")
 	}
 	var input io.Reader
