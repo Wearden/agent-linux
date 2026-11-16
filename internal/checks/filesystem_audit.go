@@ -99,9 +99,9 @@ func filesystemAudit(system fs.FS, target string) (string, string) {
 			return wire.Error, err.Error()
 		}
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	visited, violations := 0, 0
-	const maxEntries = 100000
+	const maxEntries = 2000000
 	incomplete := ""
 	deviceSkips := 0
 	var visit func(string, int) error

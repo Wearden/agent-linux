@@ -13,7 +13,7 @@ const mountHardeningOptions = "nodev,nosuid,noexec"
 
 func mountFlagBits() map[string]uintptr {
 	return map[string]uintptr{
-		"ro": syscall.MS_RDONLY, "nosuid": syscall.MS_NOSUID, "nodev": syscall.MS_NODEV,
+		"rw": 0, "ro": syscall.MS_RDONLY, "nosuid": syscall.MS_NOSUID, "nodev": syscall.MS_NODEV,
 		"noexec": syscall.MS_NOEXEC, "noatime": syscall.MS_NOATIME, "nodiratime": syscall.MS_NODIRATIME,
 		"relatime": syscall.MS_RELATIME,
 	}
