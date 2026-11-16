@@ -22,6 +22,10 @@ func policyPlan(rule checks.Rule) (mutationPlan, error) {
 		p.Path, value = "etc/login.defs", "365"
 	case "LNX-PAM-010":
 		p.Path, value = "etc/login.defs", "1"
+	case "LNX-PAM-007":
+		p.Path = "etc/pam.d/common-password"
+		p.Payload = "# Wearden LNX-PAM-007\npassword required pam_pwhistory.so remember=5 use_authtok\n"
+		return p, nil
 	default:
 		return p, errors.New("password policy has no reviewed mutation plan")
 	}
@@ -60,6 +64,12 @@ func applyPolicy(backup *ruleBackup, p mutationPlan, rule checks.Rule) error {
 		return errors.New("policy changed after its durable snapshot")
 	}
 	data := append(append([]byte(nil), backup.Data...), []byte(p.Payload)...)
+	if rule.ID == "LNX-PAM-007" {
+		var err error
+		if data, err = insertPAMHistory(backup.Data, p.Payload); err != nil {
+			return err
+		}
+	}
 	return writeManaged(p.Path, data, fs.FileMode(backup.Mode), backup.UID, backup.GID)
 }
 
@@ -103,4 +113,32 @@ func restorePolicy(backup *ruleBackup, p mutationPlan, rule checks.Rule) error {
 		return errors.New("policy recovery did not match the intended local state")
 	}
 	return nil
+}
+
+// The history module must run after pwquality and before the password-writing
+// pam_unix module; any pre-existing history module needs manual review.
+func insertPAMHistory(original []byte, block string) ([]byte, error) {
+	if bytes.Contains(original, []byte("pam_pwhistory")) {
+		return nil, errors.New("an existing password-history module requires manual review; it is not rewritten")
+	}
+	lines := strings.SplitAfter(string(original), "\n")
+	at := -1
+	for i, line := range lines {
+		fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
+		if len(fields) < 3 || fields[0] != "password" {
+			continue
+		}
+		if strings.Contains(line, "pam_pwquality.so") {
+			at = i + 1
+			break
+		}
+		if at < 0 && strings.Contains(line, "pam_unix.so") {
+			at = i
+		}
+	}
+	if at < 0 {
+		return nil, errors.New("no reviewed pwquality or unix password module anchor found")
+	}
+	out := strings.Join(lines[:at], "") + block + strings.Join(lines[at:], "")
+	return []byte(out), nil
 }
