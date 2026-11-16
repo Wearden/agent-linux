@@ -654,7 +654,7 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		change.Message = "apt authentication drop-in applied and statically rechecked; apt was not executed, environment/command-line overrides are outside this file policy, and source-level trust bypasses are never rewritten"
 	}
 	if rule.Kind == "service_disabled" {
-		change.Message = "unit mask symlink applied and rechecked; systemd was not contacted, so daemon-reload is not attested and an already running unit is not stopped"
+		change.Message = "unit mask applied through the fixed local system bus (daemon-reload, then stop of units that were running); recovery unmasks, reloads and restarts those units. Dependent units, in-flight jobs and unit runtime state beyond ActiveState are not restored"
 	}
 	if rule.Kind == "mount_options" {
 		change.Message = "per-mount nodev/nosuid/noexec flags remounted at runtime and rechecked; nothing is persisted to fstab or systemd units, so a reboot or unit restart can revert it, and processes already using the mount are not restarted"
