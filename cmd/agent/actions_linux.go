@@ -650,6 +650,9 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		restored := observed(rule)
 		change.AfterStatus, change.AfterValue = restored.Status, restored.Evidence
 		change.Message = "apply failed or native recheck did not pass; original backup restored"
+		if err != nil {
+			change.Message += ": " + err.Error() // fixed local error text, never evidence content
+		}
 		return change, nil
 	}
 	change.Status, change.AfterStatus, change.AfterValue = "applied", after.Status, after.Evidence

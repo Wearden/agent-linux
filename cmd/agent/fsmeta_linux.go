@@ -59,12 +59,12 @@ func snapshotFSMeta(p mutationPlan) (ruleBackup, error) {
 	if !ok {
 		return backup, errors.New("native device identity is unavailable")
 	}
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	visited := 0
 	var entries []fsMetaEntry
 	var visit func(string, int) error
 	visit = func(name string, depth int) error {
-		if visited >= 100000 || depth > 64 || time.Now().After(deadline) {
+		if visited >= 2000000 || depth > 64 || time.Now().After(deadline) {
 			return errors.New("metadata remediation scan reached its entry, depth or time bound")
 		}
 		visited++
