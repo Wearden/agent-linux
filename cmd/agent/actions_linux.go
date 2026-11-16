@@ -538,7 +538,7 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		change.Message = "module is active or its policy is ambiguous; no live unload or override attempted"
 		return change, nil
 	}
-	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") && !(rule.Kind == "service_disabled" && strings.HasPrefix(before.Evidence, "unit is not explicitly masked;")) && !(rule.Kind == "policy_config" && before.Evidence == "password policy value is implicit or absent") {
+	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") && !(rule.Kind == "service_disabled" && strings.HasPrefix(before.Evidence, "unit is not explicitly masked;")) && !(rule.Kind == "pam_history" && strings.HasPrefix(before.Evidence, "PAM control jumps may bypass")) && !(rule.Kind == "policy_config" && before.Evidence == "password policy value is implicit or absent") {
 		change.Message = "native precheck cannot safely establish current state"
 		return change, nil
 	}

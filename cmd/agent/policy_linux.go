@@ -132,12 +132,11 @@ func insertPAMHistory(original []byte, block string) ([]byte, error) {
 			at = i + 1
 			break
 		}
-		if at < 0 && strings.Contains(line, "pam_unix.so") {
-			at = i
-		}
 	}
+	// use_authtok needs an earlier module that supplies the candidate password;
+	// without pam_pwquality the history module would break password changes.
 	if at < 0 {
-		return nil, errors.New("no reviewed pwquality or unix password module anchor found")
+		return nil, errors.New("pam_pwquality is not configured in common-password; enable it (LNX-PAM-001) before adding password history")
 	}
 	out := strings.Join(lines[:at], "") + block + strings.Join(lines[at:], "")
 	return []byte(out), nil
