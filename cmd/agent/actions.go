@@ -44,6 +44,7 @@ type ruleBackup struct {
 	Restored      bool        `json:"restored"`
 	Companion     *ruleBackup `json:"companion,omitempty"`
 	ParentCreated bool        `json:"parent_created,omitempty"`
+	Extra         []byte      `json:"extra,omitempty"`
 }
 
 func taskCapacity(dir string, reserve ...int64) error {

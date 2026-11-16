@@ -46,7 +46,7 @@ func actionStateTrusted(base string) error {
 func planMutation(rule checks.Rule) (mutationPlan, error) {
 	var p mutationPlan
 	switch rule.Kind {
-	case "policy_config":
+	case "policy_config", "pam_history":
 		approved, known := config.NativeRule(rule.ID)
 		if !known || approved != rule {
 			return p, errors.New("policy rule differs from embedded catalog")
@@ -66,15 +66,57 @@ func planMutation(rule checks.Rule) (mutationPlan, error) {
 			p.CompanionPath = "etc/issue.net"
 			p.CompanionPayload = "Authorised use only. All activity is monitored and logged.\n"
 		}
+	case "filesystem_metadata":
+		approved, known := config.NativeRule(rule.ID)
+		target, allowed := fsMetaTarget(rule.ID)
+		if !known || approved != rule || !allowed || target != rule.Target {
+			return p, errors.New("filesystem metadata rule differs from the embedded catalog")
+		}
+		p = mutationPlan{Kind: "fsmeta", Path: "fs-audit/" + target, Payload: target}
+	case "apt_authentication":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule || rule.ID != "LNX-PKG-005" {
+			return p, errors.New("apt authentication rule differs from the embedded catalog")
+		}
+		// Fixed last-sorted apt.conf.d drop-in; the directory is never created and
+		// source-level trust bypasses are not rewritten (the recheck then restores).
+		p = mutationPlan{Kind: "file", Path: "etc/apt/apt.conf.d/99-wearden-LNX-PKG-005", Mode: 0644, Owner: true,
+			Payload: "APT::Get::AllowUnauthenticated \"false\";\nAcquire::AllowInsecureRepositories \"false\";\nAcquire::AllowDowngradeToInsecureRepositories \"false\";\nAcquire::AllowWeakRepositories \"false\";\n"}
+	case "service_disabled":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule {
+			return p, errors.New("service rule differs from the embedded catalog")
+		}
+		units, err := maskUnits(rule.Target)
+		if err != nil {
+			return p, err
+		}
+		p = mutationPlan{Kind: "mask", Path: maskPath(units[0]), Payload: rule.Target}
+	case "mount_options":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule {
+			return p, errors.New("mount rule differs from the embedded catalog")
+		}
+		switch rule.ID + " " + rule.Target {
+		case "LNX-FS-006 /var/tmp", "LNX-FS-009 /tmp", "LNX-FS-010 /dev/shm":
+		default:
+			return p, errors.New("mount control is outside the reviewed remount allowlist")
+		}
+		p = mutationPlan{Kind: "mount", Path: strings.TrimPrefix(rule.Target, "/")}
+	case "sudo_logfile":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule || rule.ID != "LNX-LOG-006" {
+			return p, errors.New("sudo logging rule differs from the embedded catalog")
+		}
+		// A fixed, last-sorted drop-in in the existing sudoers.d directory; no sudoers
+		// text is built from network input and the directory is never created here.
+		p = mutationPlan{Kind: "file", Path: "etc/sudoers.d/zz-wearden-LNX-LOG-006", Payload: "Defaults logfile=/var/log/sudo.log\nDefaults log_allowed\nDefaults log_denied\n", Mode: 0440, Owner: true}
 	case "kernel_module":
 		p = mutationPlan{Kind: "file", Path: "etc/modprobe.d/99-wearden-" + rule.ID + ".conf", Payload: "blacklist " + rule.Target + "\ninstall " + rule.Target + " /bin/false\n", Mode: 0644, Owner: true}
 	case "sysctl":
-		if rule.ID == "LNX-NET-001" {
-			return p, errors.New("ip_forward can reset other IPv4 settings; single-parameter backup cannot safely restore that change")
-		}
 		value := "0"
 		switch rule.ID {
-		case "LNX-NET-002", "LNX-NET-003", "LNX-NET-004", "LNX-NET-005", "LNX-NET-006", "LNX-NET-007", "LNX-NET-008":
+		case "LNX-NET-001", "LNX-NET-002", "LNX-NET-003", "LNX-NET-004", "LNX-NET-005", "LNX-NET-006", "LNX-NET-007", "LNX-NET-008":
 		case "LNX-NET-009", "LNX-NET-010", "LNX-NET-011":
 			value = "1"
 		case "LNX-NET-012":
@@ -202,6 +244,20 @@ func snapshotMutation(name, kind string) (ruleBackup, error) {
 		backup, err := snapshotMutation(name, "file")
 		backup.Kind = "policy"
 		return backup, err
+	}
+	if kind == "mount" {
+		if _, err := secureMutationPath(name, false); err != nil {
+			return backup, err
+		}
+		options, err := currentMountOptions("/" + name)
+		if err != nil {
+			return backup, err
+		}
+		if _, err := mountFlags(options); err != nil {
+			return backup, err
+		}
+		backup.Exists, backup.Data = true, []byte(options)
+		return backup, nil
 	}
 	info, err := secureMutationPath(name, kind == "file")
 	if err != nil {
@@ -335,6 +391,12 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 	if p.Kind == "policy" {
 		return restorePolicy(backup, p, rule)
 	}
+	if p.Kind == "mask" {
+		return restoreMask(backup)
+	}
+	if p.Kind == "fsmeta" {
+		return restoreFSMeta(backup)
+	}
 	companionPath := p.CompanionPath
 	if p.Kind == "sysctl" {
 		companionPath = p.Persistent
@@ -350,7 +412,13 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 			return err
 		}
 	}
-	return restoreSnapshot(backup)
+	if err := restoreSnapshot(backup); err != nil {
+		return err
+	}
+	if p.Path == "proc/sys/net/ipv4/ip_forward" {
+		return restoreForwarding(backup.Extra)
+	}
+	return nil
 }
 
 func restoreSnapshot(backup *ruleBackup) error {
@@ -388,6 +456,8 @@ func restoreSnapshot(backup *ruleBackup) error {
 		err = writeMetadata(backup.Path, fs.FileMode(backup.Mode), backup.UID, backup.GID)
 	case "sysctl":
 		err = writeSysctl(backup.Path, backup.Data)
+	case "mount":
+		err = remountOptions("/"+backup.Path, string(backup.Data))
 	case "file":
 		err = writeManaged(backup.Path, backup.Data, fs.FileMode(backup.Mode), backup.UID, backup.GID)
 	default:
@@ -459,11 +529,18 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		change.Message = "module is active or its policy is ambiguous; no live unload or override attempted"
 		return change, nil
 	}
-	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") && !(rule.Kind == "policy_config" && before.Evidence == "password policy value is implicit or absent") {
+	if before.Status == wire.Error && !(rule.Kind == "journald_config" && before.Evidence == "journal setting is implicit or absent") && !(rule.Kind == "service_disabled" && strings.HasPrefix(before.Evidence, "unit is not explicitly masked;")) && !(rule.Kind == "policy_config" && before.Evidence == "password policy value is implicit or absent") {
 		change.Message = "native precheck cannot safely establish current state"
 		return change, nil
 	}
-	backup, err := snapshotBeforeMutation(p.Path, p.Kind)
+	var backup ruleBackup
+	if p.Kind == "mask" {
+		backup, err = snapshotMask(p)
+	} else if p.Kind == "fsmeta" {
+		backup, err = snapshotFSMeta(p)
+	} else {
+		backup, err = snapshotBeforeMutation(p.Path, p.Kind)
+	}
 	if err != nil {
 		change.Message = err.Error()
 		return change, nil
@@ -480,6 +557,12 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 			return change, nil
 		}
 		backup.Companion = &companion
+	}
+	if p.Path == "proc/sys/net/ipv4/ip_forward" {
+		if backup.Extra, err = snapshotForwarding(); err != nil {
+			change.Message = err.Error()
+			return change, nil
+		}
 	}
 	if err := privateDir(filepath.Join(base, "backups", task.RunID)); err != nil {
 		return change, err
@@ -510,6 +593,10 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 	switch p.Kind {
 	case "policy":
 		err = applyPolicy(&backup, p, rule)
+	case "mask":
+		err = applyMask(&backup)
+	case "fsmeta":
+		err = applyFSMeta(&backup)
 	case "metadata":
 		if p.ShadowGroup {
 			gid, err = checks.ShadowGroupID(os.DirFS("/"))
@@ -524,6 +611,8 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		if err == nil {
 			err = writeManaged(p.Path, []byte(p.Payload), p.Mode, uid, gid)
 		}
+	case "mount":
+		err = remountOptions("/"+p.Path, hardenedMountOptions(string(backup.Data)))
 	case "sysctl":
 		err = writeManaged(p.Persistent, []byte(rule.Target+" = "+strings.TrimSpace(p.Payload)+"\n"), 0644, 0, 0)
 		if err == nil {
@@ -557,6 +646,21 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 	}
 	if rule.Kind == "kernel_module" {
 		change.Message = "unloaded-module file policy applied and rechecked; loaded modules are never removed"
+	}
+	if rule.Kind == "filesystem_metadata" {
+		change.Message = "bounded root-device metadata changes applied and rechecked; the exact original mode/owner journal is retained locally, no file contents were opened, and other-device or other-namespace objects are not covered"
+	}
+	if rule.Kind == "apt_authentication" {
+		change.Message = "apt authentication drop-in applied and statically rechecked; apt was not executed, environment/command-line overrides are outside this file policy, and source-level trust bypasses are never rewritten"
+	}
+	if rule.Kind == "service_disabled" {
+		change.Message = "unit mask symlink applied and rechecked; systemd was not contacted, so daemon-reload is not attested and an already running unit is not stopped"
+	}
+	if rule.Kind == "mount_options" {
+		change.Message = "per-mount nodev/nosuid/noexec flags remounted at runtime and rechecked; nothing is persisted to fstab or systemd units, so a reboot or unit restart can revert it, and processes already using the mount are not restarted"
+	}
+	if rule.Kind == "sudo_logfile" {
+		change.Message = "sudoers drop-in applied and statically rechecked; sudo itself and visudo were not executed, so runtime parsing is not attested"
 	}
 	if rule.Kind == "sysctl" {
 		change.Message = "runtime sysctl changed and rechecked; persistent drop-in saved, boot-time precedence is not attested"
