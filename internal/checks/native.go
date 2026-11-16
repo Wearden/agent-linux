@@ -79,16 +79,25 @@ func sysctlCheck(system fs.FS, rule Rule) (string, string) {
 	if err != nil {
 		return wire.Error, "cannot read runtime kernel parameter"
 	}
-	expected := "0"
+	expected, atLeast := "0", false
 	switch rule.ID {
-	case "LNX-NET-009", "LNX-NET-010", "LNX-NET-011":
+	case "LNX-NET-009", "LNX-NET-010", "LNX-NET-011", "LNX-NET-013", "LNX-NET-016", "LNX-NET-017", "LNX-NET-019", "LNX-NET-020", "LNX-NET-021":
 		expected = "1"
 	case "LNX-NET-012":
 		expected = "2"
+	case "LNX-NET-014": // kptr_restrict: a higher value is stricter
+		expected, atLeast = "2", true
+	case "LNX-NET-018": // ptrace_scope: 2 and 3 are stricter than 1
+		expected, atLeast = "1", true
 	}
 	value = strings.TrimSpace(value)
-	if _, err := strconv.ParseUint(value, 10, 32); err != nil {
+	got, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
 		return wire.Error, "invalid kernel parameter evidence"
+	}
+	if atLeast {
+		want, _ := strconv.ParseUint(expected, 10, 32)
+		return result(got >= want, "runtime kernel parameter compared to approved minimum")
 	}
 	return result(value == expected, "runtime kernel parameter compared to approved value")
 }
