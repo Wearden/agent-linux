@@ -122,10 +122,10 @@ func planMutation(rule checks.Rule) (mutationPlan, error) {
 	case "sysctl":
 		value := "0"
 		switch rule.ID {
-		case "LNX-NET-001", "LNX-NET-002", "LNX-NET-003", "LNX-NET-004", "LNX-NET-005", "LNX-NET-006", "LNX-NET-007", "LNX-NET-008":
-		case "LNX-NET-009", "LNX-NET-010", "LNX-NET-011":
+		case "LNX-NET-001", "LNX-NET-002", "LNX-NET-003", "LNX-NET-004", "LNX-NET-005", "LNX-NET-006", "LNX-NET-007", "LNX-NET-008", "LNX-NET-015", "LNX-NET-022", "LNX-NET-023", "LNX-NET-024":
+		case "LNX-NET-009", "LNX-NET-010", "LNX-NET-011", "LNX-NET-013", "LNX-NET-016", "LNX-NET-017", "LNX-NET-018", "LNX-NET-019", "LNX-NET-020", "LNX-NET-021":
 			value = "1"
-		case "LNX-NET-012":
+		case "LNX-NET-012", "LNX-NET-014":
 			value = "2"
 		default:
 			return p, errors.New("sysctl control is outside the reviewed write allowlist")
