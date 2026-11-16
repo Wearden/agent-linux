@@ -168,3 +168,82 @@ func restoreMask(backup *ruleBackup) error {
 	}
 	return nil
 }
+
+// auditd enablement is the persistent multi-user.target.wants symlink that the
+// native check observes. The unit is never started: no runtime claim is made.
+const (
+	auditdLink = "etc/systemd/system/multi-user.target.wants/auditd.service"
+	auditdUnit = "usr/lib/systemd/system/auditd.service"
+)
+
+func auditdLinkState() (bool, error) {
+	if _, err := secureMutationPath("etc/systemd/system/multi-user.target.wants", false); err != nil {
+		return false, errors.New("multi-user.target.wants is missing or not root-controlled")
+	}
+	info, err := os.Lstat("/" + auditdLink)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false, errors.New("an unreviewed auditd enablement entry exists")
+	}
+	if to, err := os.Readlink("/" + auditdLink); err != nil || to != "/"+auditdUnit {
+		return false, errors.New("auditd enablement link points elsewhere; manual review required")
+	}
+	return true, nil
+}
+
+func snapshotEnable(p mutationPlan) (ruleBackup, error) {
+	backup := ruleBackup{Kind: "enable", Path: p.Path, Exists: true}
+	info, err := os.Lstat("/" + auditdUnit)
+	if err != nil || !info.Mode().IsRegular() {
+		return backup, errors.New("auditd unit is not a regular file in /usr/lib/systemd/system; install it first")
+	}
+	if _, err := os.Lstat("/etc/systemd/system/auditd.service"); !errors.Is(err, os.ErrNotExist) {
+		return backup, errors.New("an auditd unit override exists and requires manual review")
+	}
+	exists, err := auditdLinkState()
+	if err != nil {
+		return backup, err
+	}
+	if !exists {
+		backup.Data = []byte("created")
+	}
+	return backup, nil
+}
+
+func reloadSystemd() error {
+	manager, err := connectSystemd()
+	if err != nil {
+		return err
+	}
+	defer manager.close()
+	return manager.reload()
+}
+
+func applyEnable(backup *ruleBackup) error {
+	if string(backup.Data) != "created" {
+		return nil
+	}
+	if err := syscall.Symlink("/"+auditdUnit, "/"+auditdLink); err != nil {
+		return errors.New("cannot create auditd enablement link")
+	}
+	return reloadSystemd()
+}
+
+// Only a link this task created is removed.
+func restoreEnable(backup *ruleBackup) error {
+	if string(backup.Data) != "created" {
+		return nil
+	}
+	exists, err := auditdLinkState()
+	if err != nil {
+		return err
+	}
+	if exists {
+		if err := os.Remove("/" + auditdLink); err != nil {
+			return errors.New("cannot remove task-created auditd enablement link")
+		}
+	}
+	return reloadSystemd()
+}
