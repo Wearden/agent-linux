@@ -82,6 +82,12 @@ func planMutation(rule checks.Rule) (mutationPlan, error) {
 		// source-level trust bypasses are not rewritten (the recheck then restores).
 		p = mutationPlan{Kind: "file", Path: "etc/apt/apt.conf.d/99-wearden-LNX-PKG-005", Mode: 0644, Owner: true,
 			Payload: "APT::Get::AllowUnauthenticated \"false\";\nAcquire::AllowInsecureRepositories \"false\";\nAcquire::AllowDowngradeToInsecureRepositories \"false\";\nAcquire::AllowWeakRepositories \"false\";\n"}
+	case "auditd_enabled":
+		approved, known := config.NativeRule(rule.ID)
+		if !known || approved != rule || rule.ID != "LNX-AUD-002" {
+			return p, errors.New("auditd rule differs from the embedded catalog")
+		}
+		p = mutationPlan{Kind: "enable", Path: auditdLink}
 	case "service_disabled":
 		approved, known := config.NativeRule(rule.ID)
 		if !known || approved != rule {
@@ -394,6 +400,9 @@ func restoreRule(backup *ruleBackup, rule checks.Rule) error {
 	if p.Kind == "mask" {
 		return restoreMask(backup)
 	}
+	if p.Kind == "enable" {
+		return restoreEnable(backup)
+	}
 	if p.Kind == "fsmeta" {
 		return restoreFSMeta(backup)
 	}
@@ -538,6 +547,8 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		backup, err = snapshotMask(p)
 	} else if p.Kind == "fsmeta" {
 		backup, err = snapshotFSMeta(p)
+	} else if p.Kind == "enable" {
+		backup, err = snapshotEnable(p)
 	} else {
 		backup, err = snapshotBeforeMutation(p.Path, p.Kind)
 	}
@@ -597,6 +608,8 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 		err = applyMask(&backup)
 	case "fsmeta":
 		err = applyFSMeta(&backup)
+	case "enable":
+		err = applyEnable(&backup)
 	case "metadata":
 		if p.ShadowGroup {
 			gid, err = checks.ShadowGroupID(os.DirFS("/"))
@@ -652,6 +665,9 @@ func executeRule(base string, task wire.Task, rule checks.Rule, deadline time.Ti
 	}
 	if rule.Kind == "apt_authentication" {
 		change.Message = "apt authentication drop-in applied and statically rechecked; apt was not executed, environment/command-line overrides are outside this file policy, and source-level trust bypasses are never rewritten"
+	}
+	if rule.Kind == "auditd_enabled" {
+		change.Message = "auditd enablement symlink created and rechecked; the unit was not started, so running state and audit event delivery are not attested"
 	}
 	if rule.Kind == "service_disabled" {
 		change.Message = "unit mask applied through the fixed local system bus (daemon-reload, then stop of units that were running); recovery unmasks, reloads and restarts those units. Dependent units, in-flight jobs and unit runtime state beyond ActiveState are not restored"
