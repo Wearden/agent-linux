@@ -154,13 +154,20 @@ func module(system fs.FS, target string) (string, string) {
 			return wire.Error, "cannot read modprobe configuration file"
 		}
 		scanner := bufio.NewScanner(strings.NewReader(text))
+		pending := ""
 		for scanner.Scan() {
+			joined := false
 			line := strings.TrimSpace(strings.SplitN(scanner.Text(), "#", 2)[0])
-			if line == "" {
+			// A trailing backslash joins the next line into one directive, as kmod does.
+			if strings.HasSuffix(line, "\\") {
+				pending += " " + strings.TrimSuffix(line, "\\")
 				continue
 			}
-			if strings.HasSuffix(line, "\\") {
-				return wire.Error, "continued modprobe directives require review"
+			if pending != "" {
+				line, pending, joined = strings.TrimSpace(pending+" "+line), "", true
+			}
+			if line == "" {
+				continue
 			}
 			fields := strings.Fields(line)
 			if len(fields) < 2 {
@@ -178,6 +185,9 @@ func module(system fs.FS, target string) (string, string) {
 			if normalize(fields[1]) != normalize(target) {
 				continue
 			}
+			if joined {
+				return wire.Error, "continued modprobe directive for the target module requires review"
+			}
 			switch fields[0] {
 			case "softdep":
 				return wire.Error, "softdep interaction requires kmod version review"
@@ -194,7 +204,7 @@ func module(system fs.FS, target string) (string, string) {
 				install = command
 			}
 		}
-		if scanner.Err() != nil {
+		if scanner.Err() != nil || pending != "" {
 			return wire.Error, "cannot parse modprobe configuration"
 		}
 	}

@@ -27,7 +27,14 @@ func aptTokens(text string) ([]policyToken, error) {
 			continue
 		}
 		if c == '#' {
-			return nil, errors.New("apt preprocessor directive requires review")
+			// Only #include and #clear are directives; every other #-line is a comment.
+			if strings.HasPrefix(text[i:], "#include") || strings.HasPrefix(text[i:], "#clear") {
+				return nil, errors.New("apt preprocessor directive requires review")
+			}
+			for i < len(text) && text[i] != '\n' {
+				i++
+			}
+			continue
 		}
 		if i+1 < len(text) && text[i:i+2] == "//" {
 			for i < len(text) && text[i] != '\n' {
@@ -155,6 +162,9 @@ func aptSettings(text string, settings map[string]string) error {
 
 var aptPartName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// apt also loads *.conf parts from apt.conf.d (for example 20snapd.conf).
+var aptConfName = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.conf)?$`)
+
 func aptAuthentication(system fs.FS) (string, string) {
 	files := []string{}
 	entries, err := nativeEntries(system, "etc/apt/apt.conf.d", false)
@@ -162,7 +172,7 @@ func aptAuthentication(system fs.FS) (string, string) {
 		return wire.Error, "cannot inspect apt authentication configuration directory"
 	}
 	for _, entry := range entries {
-		if !aptPartName.MatchString(entry.Name()) {
+		if !aptConfName.MatchString(entry.Name()) {
 			return wire.Error, "apt configuration directory contains a filename outside the reviewed load-order subset"
 		}
 		files = append(files, "etc/apt/apt.conf.d/"+entry.Name())
