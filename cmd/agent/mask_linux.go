@@ -68,20 +68,60 @@ func snapshotMask(p mutationPlan) (ruleBackup, error) {
 		}
 	}
 	backup.Data = []byte(strings.Join(created, ","))
+	// Read-only systemd query: units running now are stopped on apply and
+	// started again on recovery. An unreachable manager refuses the whole task.
+	manager, err := connectSystemd()
+	if err != nil {
+		return backup, err
+	}
+	defer manager.close()
+	var running []string
+	for _, unit := range units {
+		state, err := manager.activeState(unit)
+		if err != nil {
+			return backup, err
+		}
+		if state != "inactive" && state != "failed" {
+			running = append(running, unit)
+		}
+	}
+	backup.Extra = []byte(strings.Join(running, ","))
 	return backup, nil
 }
 
-func applyMask(backup *ruleBackup) error {
-	if len(backup.Data) == 0 {
-		return nil
+// splitUnits validates a comma list that was journaled by this task.
+func splitUnits(list []byte) ([]string, error) {
+	if len(list) == 0 {
+		return nil, nil
 	}
-	units, err := maskUnits(string(backup.Data))
+	return maskUnits(string(list))
+}
+
+func applyMask(backup *ruleBackup) error {
+	units, err := splitUnits(backup.Data)
+	if err != nil {
+		return err
+	}
+	running, err := splitUnits(backup.Extra)
 	if err != nil {
 		return err
 	}
 	for _, unit := range units {
 		if err := syscall.Symlink("/dev/null", "/"+maskPath(unit)); err != nil {
 			return errors.New("cannot create unit mask")
+		}
+	}
+	manager, err := connectSystemd()
+	if err != nil {
+		return err
+	}
+	defer manager.close()
+	if err := manager.reload(); err != nil {
+		return err
+	}
+	for _, unit := range running {
+		if err := manager.stop(unit); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -91,10 +131,11 @@ func restoreMask(backup *ruleBackup) error {
 	if !backup.Exists || backup.Companion != nil || backup.ParentCreated {
 		return errors.New("invalid mask backup shape")
 	}
-	if len(backup.Data) == 0 {
-		return nil
+	units, err := splitUnits(backup.Data)
+	if err != nil {
+		return err
 	}
-	units, err := maskUnits(string(backup.Data))
+	running, err := splitUnits(backup.Extra)
 	if err != nil {
 		return err
 	}
@@ -107,6 +148,22 @@ func restoreMask(backup *ruleBackup) error {
 			if err := os.Remove("/" + maskPath(unit)); err != nil {
 				return errors.New("cannot remove task-created unit mask")
 			}
+		}
+	}
+	if len(units) == 0 && len(running) == 0 {
+		return nil
+	}
+	manager, err := connectSystemd()
+	if err != nil {
+		return err
+	}
+	defer manager.close()
+	if err := manager.reload(); err != nil {
+		return err
+	}
+	for _, unit := range running {
+		if err := manager.start(unit); err != nil {
+			return err
 		}
 	}
 	return nil
